@@ -14,27 +14,48 @@ import geometry_msgs.msg
 
 import sim_node  # TODO remove in Dashing
 
-
-def q_to_rpy(q: geometry_msgs.msg.Quaternion) -> Tuple[float, float, float]:
-    matrix = xf.quaternion_matrix([q.w, q.x, q.y, q.z])  # Note order
-    return xf.euler_from_matrix(matrix, axes='sxyz')
+# Heads up:
+# transformations.py expresses quaternions as [w x y z], but ROS users expect to see [x y z w]
 
 
-def tf_to_str(tf: geometry_msgs.msg.TransformStamped) -> str:
+def t_to_str(t: geometry_msgs.msg.Vector3) -> str:
+    return f'xyz=({t.x:.2f}, {t.y:.2f}, {t.z:.2f})'
+
+
+def q_to_str(q: List) -> str:
+    return f'xyzw=({q[1]:.2f}, {q[2]:.2f}, {q[3]:.2f}, {q[0]:.2f})'
+
+
+def e_to_str(r: Tuple[float, float, float]) -> str:
+    return f'rpy=({r[0]:.2f}, {r[1]:.2f}, {r[2]:.2f})'
+
+
+def print_tf(tf: geometry_msgs.msg.TransformStamped,
+             prefix: str = '') -> None:
     t = tf.transform.translation
-    r = q_to_rpy(tf.transform.rotation)
-    return f'<origin xyz="{t.x:.2f} {t.y:.2f} {t.z:.2f}" rpy="{r[0]:.2f}, {r[1]:.2f}, {r[2]:.2f}" />'
+
+    # Get the forward translation
+    q = [tf.transform.rotation.w, tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z]
+    m = xf.quaternion_matrix(q)
+    e = xf.euler_from_matrix(m)
+
+    m_inverse = xf.inverse_matrix(m)
+    q_inverse = xf.quaternion_from_matrix(m_inverse)
+    e_inverse = xf.euler_from_matrix(m_inverse)
+
+    print(f'{prefix}{tf.header.frame_id} => {tf.child_frame_id}: {t_to_str(t)} {q_to_str(q)} {e_to_str(e)}\n'
+          f'                          inverse: {q_to_str(q_inverse)} {e_to_str(e_inverse)}')
 
 
 # Print children of this parent, return count of transforms printed
 def print_children(parent: geometry_msgs.msg.TransformStamped,
                    frames: Dict[str, geometry_msgs.msg.TransformStamped],
-                   prefix: str = '...') -> int:
+                   prefix: str = '   ') -> int:
     num_printed = 0
     for tf in frames.values():
         if parent.child_frame_id == tf.header.frame_id:
-            print(f'{prefix}{tf.header.frame_id} => {tf.child_frame_id}: {tf_to_str(tf)}')
-            num_printed = num_printed + print_children(tf, frames, prefix + '...') + 1
+            print_tf(tf, prefix)
+            num_printed = num_printed + print_children(tf, frames, prefix + '   ') + 1
     return num_printed
 
 
@@ -100,7 +121,7 @@ class MonitorNode(sim_node.SimNode):
         # Print the tree
         num_printed = 0
         for tf in roots:
-            print(f'{tf.header.frame_id} => {tf.child_frame_id}: {tf_to_str(tf)}')
+            print_tf(tf)
             num_printed = num_printed + print_children(tf, frames) + 1
 
         if num_printed < len(frames):
