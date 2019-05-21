@@ -4,6 +4,7 @@
 
 from typing import Dict, List, Tuple
 
+import numpy as np
 import transformations as xf
 
 import rclpy
@@ -30,6 +31,13 @@ def e_to_str(r: Tuple[float, float, float]) -> str:
     return f'rpy=({r[0]:.2f}, {r[1]:.2f}, {r[2]:.2f})'
 
 
+def tf_to_matrix(tf: geometry_msgs.msg.TransformStamped) -> np.ndarray:
+    q = [tf.transform.rotation.w, tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z]
+    m = xf.quaternion_matrix(q)
+    m[:3, 3] = [tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z]
+    return m
+
+
 def print_tf(tf: geometry_msgs.msg.TransformStamped,
              prefix: str = '') -> None:
     t = tf.transform.translation
@@ -50,12 +58,19 @@ def print_tf(tf: geometry_msgs.msg.TransformStamped,
 # Print children of this parent, return count of transforms printed
 def print_children(parent: geometry_msgs.msg.TransformStamped,
                    frames: Dict[str, geometry_msgs.msg.TransformStamped],
+                   m_parent_root: np.ndarray,
                    prefix: str = '   ') -> int:
     num_printed = 0
     for tf in frames.values():
         if parent.child_frame_id == tf.header.frame_id:
             print_tf(tf, prefix)
-            num_printed = num_printed + print_children(tf, frames, prefix + '   ') + 1
+
+            m_child_parent = tf_to_matrix(tf)
+            m_child_root = m_child_parent @ m_parent_root
+            e_child_root = xf.euler_from_matrix(m_child_root)
+            print(f'                          composite: {e_to_str(e_child_root)}')
+
+            num_printed = num_printed + print_children(tf, frames, m_child_root, prefix + '   ') + 1
     return num_printed
 
 
@@ -122,7 +137,8 @@ class MonitorNode(sim_node.SimNode):
         num_printed = 0
         for tf in roots:
             print_tf(tf)
-            num_printed = num_printed + print_children(tf, frames) + 1
+            m_child_root = tf_to_matrix(tf)
+            num_printed = num_printed + print_children(tf, frames, m_child_root) + 1
 
         if num_printed < len(frames):
             print(f'!!! cycle detected with {len(frames) - num_printed} transforms')

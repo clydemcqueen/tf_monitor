@@ -3,6 +3,7 @@
 """Publish TF messages for testing"""
 
 import math
+import numpy as np
 import transformations as xf
 
 import rclpy
@@ -27,20 +28,38 @@ def test_to_tf(test) -> geometry_msgs.msg.TransformStamped:
     return tf
 
 
+def pre_multiply(left: np.ndarray, tf: geometry_msgs.msg.TransformStamped) -> None:
+    tfq = tf.transform.rotation
+    xfq = [tfq.w, tfq.x, tfq.y, tfq.z]
+
+    right = xf.quaternion_matrix(xfq)
+    right = left @ right
+
+    xfq = xf.quaternion_from_matrix(right)
+    tfq = geometry_msgs.msg.Quaternion(w=xfq[0], x=xfq[1], y=xfq[2], z=xfq[3])
+    tf.transform.rotation = tfq
+
+
 class TestNode(sim_node.SimNode):
 
     def __init__(self):
 
         super().__init__('test_node')
 
+        # test_tree = [
+        #     ['map', 'base_link', 0., 0., 0., math.pi, 0., 0.],
+        #     ['base_link', 'camera_link', 0., 0., 0., 0., math.pi, 0.],
+        #     ['camera_link', 'camera_frame', 0., 0., 0., 0., 0., math.pi],
+        #     ['bad_parent', 'base_link', 0., 0., 0., 0., 0., 0.],
+        #     ['cycle1', 'cycle2', 0., 0., 0., 0., 0., 0.],
+        #     ['cycle2', 'cycle1', 0., 0., 0., 0., 0., 0.],
+        #     ['map', 'marker0', 0., 0., 0., 0., 0., 0.]
+        # ]
+
         test_tree = [
-            ['map', 'base_link', 0., 0., 0., math.pi, 0., 0.],
-            ['base_link', 'camera_link', 0., 0., 0., 0., math.pi, 0.],
-            ['camera_link', 'camera_frame', 0., 0., 0., 0., 0., math.pi],
-            ['bad_parent', 'base_link', 0., 0., 0., 0., 0., 0.],
-            ['cycle1', 'cycle2', 0., 0., 0., 0., 0., 0.],
-            ['cycle2', 'cycle1', 0., 0., 0., 0., 0., 0.],
-            ['map', 'marker0', 0., 0., 0., 0., 0., 0.]
+            ['map', 'base_link', 0., 0., 1., 0., 0., 0.],
+            ['base_link', 'segment1', 1., 0., 0., 0., 0., 0.],
+            ['segment1', 'segment2', 0.5, 0., 0., 0., 0., 0.]
         ]
 
         self._msg = tf2_msgs.msg.TFMessage()
@@ -52,10 +71,20 @@ class TestNode(sim_node.SimNode):
         self.get_logger().info("test_node running")
 
     def timer_callback(self):
-        # Same tree, different timestamps
+        # Update timestamps
         stamp = self.now().to_msg()
         for transform in self._msg.transforms:
             transform.header.stamp = stamp
+
+        # Rotate
+        m_rotate_some = xf.euler_matrix(0., 0., math.pi / 8)
+        m_inverse = xf.inverse_matrix(m_rotate_some)
+
+        pre_multiply(m_rotate_some, self._msg.transforms[0])
+        pre_multiply(m_rotate_some, self._msg.transforms[1])
+        pre_multiply(m_inverse, self._msg.transforms[2])
+        pre_multiply(m_inverse, self._msg.transforms[2])
+
         self._tf_pub.publish(self._msg)
 
 
