@@ -1,6 +1,19 @@
 #!/usr/bin/env python
 
-"""ROS2 TF diagnostic tool"""
+"""
+ROS2 TF diagnostic tool
+
+Transformation notation:
+    t_child_parent is a transform
+    vector_child = t_child_parent * vector_parent
+    xxx_f_child means xxx is expressed in child frame
+    xxx_pose_f_child is equivalent to t_child_xxx
+    t_a_c = t_a_b * t_b_c
+    e_child_parent is a fixed axis rotation, i.e., roll, pitch, yaw about X, Y, Z, per
+    https://www.ros.org/reps/rep-0103.html
+
+transformations.py expresses quaternions as [w x y z], but ROS users expect to see [x y z w]
+"""
 
 from typing import Dict, List, Tuple
 
@@ -15,12 +28,9 @@ import geometry_msgs.msg
 
 import sim_node  # TODO remove in Dashing
 
-# Heads up:
-# transformations.py expresses quaternions as [w x y z], but ROS users expect to see [x y z w]
 
-
-def t_to_str(t: geometry_msgs.msg.Vector3) -> str:
-    return f'xyz=({t.x:.2f}, {t.y:.2f}, {t.z:.2f})'
+def t_to_str(t: List) -> str:
+    return f'xyz=({t[0]:.2f}, {t[1]:.2f}, {t[2]:.2f})'
 
 
 def q_to_str(q: List) -> str:
@@ -31,6 +41,13 @@ def e_to_str(r: Tuple[float, float, float]) -> str:
     return f'rpy=({r[0]:.2f}, {r[1]:.2f}, {r[2]:.2f})'
 
 
+def m_to_str(m: np.ndarray) -> str:
+    t = xf.translation_from_matrix(m)
+    q = xf.quaternion_from_matrix(m)
+    e = xf.euler_from_matrix(m)
+    return f'{t_to_str(t)} {q_to_str(q)} {e_to_str(e)}'
+
+
 def tf_to_matrix(tf: geometry_msgs.msg.TransformStamped) -> np.ndarray:
     q = [tf.transform.rotation.w, tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z]
     m = xf.quaternion_matrix(q)
@@ -38,40 +55,48 @@ def tf_to_matrix(tf: geometry_msgs.msg.TransformStamped) -> np.ndarray:
     return m
 
 
-def print_tf(tf: geometry_msgs.msg.TransformStamped,
-             prefix: str = '') -> None:
-    t = tf.transform.translation
+class Transform:
 
-    # Get the forward translation
-    q = [tf.transform.rotation.w, tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z]
-    m = xf.quaternion_matrix(q)
-    e = xf.euler_from_matrix(m)
+    def __init__(self, tf: geometry_msgs.msg.TransformStamped = None):
+        if tf is not None:
+            self._parent_id = tf.header.frame_id
+            self._child_id = tf.child_frame_id
+            self._m_child_parent = tf_to_matrix(tf)
+            self._m_parent_child = xf.inverse_matrix(self._m_child_parent)
 
-    m_inverse = xf.inverse_matrix(m)
-    q_inverse = xf.quaternion_from_matrix(m_inverse)
-    e_inverse = xf.euler_from_matrix(m_inverse)
+    # Print this transform
+    # Return the count of transforms printed (always 1)
+    def print(self, prefix: str = '') -> int:
+        print(f'{prefix}{self._parent_id} => {self._child_id}: {m_to_str(self._m_child_parent)}\n'
+              f'                          inverse: {m_to_str(self._m_parent_child)}')
+        return 1
 
-    print(f'{prefix}{tf.header.frame_id} => {tf.child_frame_id}: {t_to_str(t)} {q_to_str(q)} {e_to_str(e)}\n'
-          f'                          inverse: {q_to_str(q_inverse)} {e_to_str(e_inverse)}')
-
-
-# Print children of this parent, return count of transforms printed
-def print_children(parent: geometry_msgs.msg.TransformStamped,
+    # Print transforms reachable by this transform
+    # Return count of transforms printed
+    def print_tree(self,
+                   t_child_root,
                    frames: Dict[str, geometry_msgs.msg.TransformStamped],
-                   m_parent_root: np.ndarray,
                    prefix: str = '   ') -> int:
-    num_printed = 0
-    for tf in frames.values():
-        if parent.child_frame_id == tf.header.frame_id:
-            print_tf(tf, prefix)
+        # Walk the list of good transforms, looking for transforms child => grandchild
+        num_printed = 0
+        for tf in frames.values():
+            if tf.header.frame_id == self._child_id:
+                t_grandchild_child = Transform(tf)
+                num_printed = num_printed + t_grandchild_child.print(prefix)
 
-            m_child_parent = tf_to_matrix(tf)
-            m_child_root = m_child_parent @ m_parent_root
-            e_child_root = xf.euler_from_matrix(m_child_root)
-            print(f'                          composite: {e_to_str(e_child_root)}')
+                # Composite root => grandchild
+                t_grandchild_root = Transform()
+                t_grandchild_root._parent_id = tf.header.frame_id
+                t_grandchild_root._child_id = tf.child_frame_id
+                t_grandchild_root._m_child_parent = t_grandchild_child._m_child_parent @ t_child_root._m_child_parent
+                t_grandchild_root._m_parent_child = xf.inverse_matrix(t_grandchild_root._m_child_parent)
 
-            num_printed = num_printed + print_children(tf, frames, m_child_root, prefix + '   ') + 1
-    return num_printed
+                print(f'                          composite: {m_to_str(t_grandchild_root._m_child_parent)}')
+                print(f'                          inverse composite: {m_to_str(t_grandchild_root._m_parent_child)}')
+
+                # Recurse
+                num_printed = num_printed + t_grandchild_child.print_tree(t_grandchild_root, frames, prefix + '   ')
+        return num_printed
 
 
 class MonitorNode(sim_node.SimNode):
@@ -114,34 +139,36 @@ class MonitorNode(sim_node.SimNode):
             self._transforms.pop(key)
 
         # Build a dict of good transforms, keyed by child_frame_id
-        frames: Dict[str, geometry_msgs.msg.TransformStamped] = {}
+        good: Dict[str, geometry_msgs.msg.TransformStamped] = {}
 
         for tf in self._transforms.values():
 
             # Ignore conflicting parents
-            if tf.child_frame_id in frames:
+            if tf.child_frame_id in good:
                 print(f'!!! {tf.header.frame_id} => {tf.child_frame_id} conflicts with',
-                      f'{frames[tf.child_frame_id].header.frame_id} => {tf.child_frame_id}, ignoring')
+                      f'{good[tf.child_frame_id].header.frame_id} => {tf.child_frame_id}, ignoring')
                 continue
 
-            frames[tf.child_frame_id] = tf
+            good[tf.child_frame_id] = tf
 
-        # Find roots
+        # Build a list of root transforms
+        # Cycles don't have a root, so they will be unreachable
         roots: List[geometry_msgs.msg.TransformStamped] = []
 
-        for tf in frames.values():
-            if tf.header.frame_id not in frames:
+        for tf in good.values():
+            if tf.header.frame_id not in good:
                 roots.append(tf)
 
-        # Print the tree
+        # Print the trees
         num_printed = 0
         for tf in roots:
-            print_tf(tf)
-            m_child_root = tf_to_matrix(tf)
-            num_printed = num_printed + print_children(tf, frames, m_child_root) + 1
+            t_child_root = Transform(tf)
+            num_printed = num_printed + t_child_root.print()
+            num_printed = num_printed + t_child_root.print_tree(t_child_root, good)
 
-        if num_printed < len(frames):
-            print(f'!!! cycle detected with {len(frames) - num_printed} transforms')
+        # If there are unreachable transforms there must be a cycle
+        if num_printed < len(good):
+            print(f'!!! cycle detected with {len(good) - num_printed} transforms')
 
         print('===')
 
