@@ -57,45 +57,49 @@ def tf_to_matrix(tf: geometry_msgs.msg.TransformStamped) -> np.ndarray:
 
 class Transform:
 
-    def __init__(self, tf: geometry_msgs.msg.TransformStamped = None):
-        if tf is not None:
-            self._parent_id = tf.header.frame_id
-            self._child_id = tf.child_frame_id
-            self._m_child_parent = tf_to_matrix(tf)
-            self._m_parent_child = xf.inverse_matrix(self._m_child_parent)
+    def __init__(self, tf: geometry_msgs.msg.TransformStamped, parent: 'Transform' = None):
+        self._parent_id = tf.header.frame_id
+        self._child_id = tf.child_frame_id
+        self._m_child_parent = tf_to_matrix(tf)
+        self._m_parent_child = xf.inverse_matrix(self._m_child_parent)
+
+        # Compute composite transform
+        if parent is None:
+            self._root = True
+            self._m_child_root = self._m_child_parent
+            self._m_root_child = self._m_parent_child
+        else:
+            self._root = False
+            self._m_child_root = self._m_child_parent @ parent._m_child_root
+            self._m_root_child = parent._m_root_child @ self._m_parent_child  # Multiply is cheaper than inverse
 
     # Print this transform
     # Return the count of transforms printed (always 1)
     def print(self, prefix: str = '') -> int:
-        print(f'{prefix}{self._parent_id} => {self._child_id}: {m_to_str(self._m_child_parent)}\n'
-              f'                          inverse: {m_to_str(self._m_parent_child)}')
+        # Print transform and inverse
+        print(f'{prefix}{self._parent_id} => {self._child_id}:')
+        print(f'                      forward:           {m_to_str(self._m_child_parent)}')
+        print(f'                      inverse:           {m_to_str(self._m_parent_child)}')
+
+        # Print composite and inverse
+        if not self._root:
+            print(f'                      composite:         {m_to_str(self._m_child_root)}')
+            print(f'                      composite inverse: {m_to_str(self._m_root_child)}')
         return 1
 
-    # Print transforms reachable by this transform
+    # Print a tree of transforms
     # Return count of transforms printed
     def print_tree(self,
-                   t_child_root,
-                   frames: Dict[str, geometry_msgs.msg.TransformStamped],
+                   good: Dict[str, geometry_msgs.msg.TransformStamped],
                    prefix: str = '   ') -> int:
+        # Print this transform
+        num_printed = self.print(prefix)
+
         # Walk the list of good transforms, looking for transforms child => grandchild
-        num_printed = 0
-        for tf in frames.values():
+        for tf in good.values():
             if tf.header.frame_id == self._child_id:
-                t_grandchild_child = Transform(tf)
-                num_printed = num_printed + t_grandchild_child.print(prefix)
-
-                # Composite root => grandchild
-                t_grandchild_root = Transform()
-                t_grandchild_root._parent_id = tf.header.frame_id
-                t_grandchild_root._child_id = tf.child_frame_id
-                t_grandchild_root._m_child_parent = t_grandchild_child._m_child_parent @ t_child_root._m_child_parent
-                t_grandchild_root._m_parent_child = xf.inverse_matrix(t_grandchild_root._m_child_parent)
-
-                print(f'                          composite: {m_to_str(t_grandchild_root._m_child_parent)}')
-                print(f'                          inverse composite: {m_to_str(t_grandchild_root._m_parent_child)}')
-
-                # Recurse
-                num_printed = num_printed + t_grandchild_child.print_tree(t_grandchild_root, frames, prefix + '   ')
+                t_grandchild_child = Transform(tf, self)
+                num_printed = num_printed + t_grandchild_child.print_tree(good, prefix + '   ')
         return num_printed
 
 
@@ -163,8 +167,7 @@ class MonitorNode(sim_node.SimNode):
         num_printed = 0
         for tf in roots:
             t_child_root = Transform(tf)
-            num_printed = num_printed + t_child_root.print()
-            num_printed = num_printed + t_child_root.print_tree(t_child_root, good)
+            num_printed = num_printed + t_child_root.print_tree(good)
 
         # If there are unreachable transforms there must be a cycle
         if num_printed < len(good):
