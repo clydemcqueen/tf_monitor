@@ -17,16 +17,14 @@ transformations.py expresses quaternions as [w x y z], but ROS users expect to s
 
 from typing import Dict, List, Tuple
 
-import numpy as np
-import transformations as xf
-
-import rclpy
-import rclpy.time
-import rclpy.node
-import tf2_msgs.msg
 import geometry_msgs.msg
-
+import numpy as np
+import rclpy
+import rclpy.node
+import rclpy.time
 import sim_node  # TODO remove in Dashing
+import tf2_msgs.msg
+import transformations as xf
 
 
 def t_to_str(t: List) -> str:

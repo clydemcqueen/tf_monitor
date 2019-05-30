@@ -3,8 +3,8 @@
 """Shim to handle sim time, goes away in Dashing"""
 
 import rclpy
-import rclpy.time
 import rclpy.node
+import rclpy.time
 import rosgraph_msgs.msg
 
 
