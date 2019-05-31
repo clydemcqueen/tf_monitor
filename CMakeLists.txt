@@ -9,6 +9,6 @@ install(PROGRAMS
   scripts/monitor_node.py
   scripts/test_node.py
   DESTINATION lib/${PROJECT_NAME}
-)
+  )
 
 ament_package()
