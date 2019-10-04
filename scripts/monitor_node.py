@@ -1,7 +1,15 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """
 ROS2 TF diagnostic tool
+
+Usage: `ros2 run tf_monitor monitor_node.py`
+
+Running during a simulation: `ros2 run tf_monitor monitor_node.py __params:=monitor_node_params.yaml`
+Where monitor_node_params.yaml is:
+/monitor_node:
+  ros__parameters:
+    use_sim_time: True
 
 Transformation notation:
     t_child_parent is a transform
@@ -21,6 +29,7 @@ import geometry_msgs.msg
 import numpy as np
 import rclpy
 import rclpy.node
+import rclpy.qos
 import rclpy.time
 import sim_node  # TODO remove in Dashing
 import tf2_msgs.msg
@@ -110,10 +119,12 @@ class MonitorNode(sim_node.SimNode):
         self._transforms: Dict[Tuple[str, str], geometry_msgs.msg.TransformStamped] = {}
 
         # Most nodes publish on /tf
-        self.create_subscription(tf2_msgs.msg.TFMessage, '/tf', self.tf_callback)
+        self.create_subscription(tf2_msgs.msg.TFMessage, '/tf', self.tf_callback,
+                                 qos_profile=rclpy.qos.QoSProfile(depth=10))
 
         # robot_state_publisher (and others?) publish on /tf_static
-        self.create_subscription(tf2_msgs.msg.TFMessage, '/tf_static', self.tf_callback)
+        self.create_subscription(tf2_msgs.msg.TFMessage, '/tf_static', self.tf_callback,
+                                 qos_profile=rclpy.qos.QoSProfile(depth=10))
 
         # Walk the TF tree every second
         self.create_timer(1., self.timer_callback)

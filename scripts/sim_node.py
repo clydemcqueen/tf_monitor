@@ -1,9 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """Shim to handle sim time, goes away in Dashing"""
 
 import rclpy
 import rclpy.node
+import rclpy.qos
 import rclpy.time
 import rosgraph_msgs.msg
 
@@ -18,7 +19,8 @@ class SimNode(rclpy.node.Node):
         use_sim_time = self.get_parameter('use_sim_time')
         if use_sim_time.value:
             self.get_logger().info('using sim time')
-            self.create_subscription(rosgraph_msgs.msg.Clock, '/clock', self.clock_callback)
+            self.create_subscription(rosgraph_msgs.msg.Clock, '/clock', self.clock_callback,
+                                     qos_profile=rclpy.qos.QoSProfile(depth=10))
 
     def clock_callback(self, msg: rosgraph_msgs.msg.Clock) -> None:
         self._sim_time = rclpy.time.Time.from_msg(msg.clock)
