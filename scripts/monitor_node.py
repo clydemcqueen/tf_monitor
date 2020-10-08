@@ -31,7 +31,7 @@ import rclpy
 import rclpy.node
 import rclpy.qos
 import rclpy.time
-import sim_node  # TODO remove in Dashing
+import sim_node
 import tf2_msgs.msg
 import transformations as xf
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Shim to handle sim time, goes away in Dashing"""
+"""Shim to handle sim time, goes away one day???"""
 
 import rclpy
 import rclpy.node
